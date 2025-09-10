@@ -36,7 +36,7 @@
           <span class="text-[11.3px] leading-[1.55] text-[#717182]">Stock: {{ product.stock }}</span>
           <span class="text-[12.8px] leading-[1.64] font-medium text-[#030213]">${{ product.price.toFixed(2) }}</span>
         </div>
-        <div class="flex gap-2">
+        <div class="flex gap-2 mb-3">
           <button
             @click="viewingProduct = product"
             class="inline-flex items-center gap-1 border border-black/10 rounded-[6.75px] px-3 py-1.5 text-[11.3px] leading-[1.55] font-medium hover:bg-gray-50 transition-colors"
@@ -70,6 +70,23 @@
             </svg>
           </button>
         </div>
+        <!-- Add to Cart Button -->
+        <button
+          @click="handleAddToCart(product)"
+          :disabled="product.stock === 0 || addingToCart === product.id"
+          class="w-full inline-flex items-center justify-center gap-2 bg-red-400 text-white rounded-[6.75px] px-3 py-2 text-[11.3px] leading-[1.55] font-medium hover:bg-red-500 transition-colors disabled:bg-gray-300 disabled:cursor-not-allowed"
+        >
+          <svg v-if="addingToCart === product.id" class="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/>
+            <path class="opacity-75" fill="currentColor" d="m4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+          </svg>
+          <svg v-else class="w-3.5 h-3.5" viewBox="0 0 14 14" fill="none">
+            <path d="M7 0V14M14 7H0" stroke="white" stroke-width="1.17" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span v-if="addingToCart === product.id">Adding...</span>
+          <span v-else-if="product.stock === 0">Out of Stock</span>
+          <span v-else>Add to Cart</span>
+        </button>
       </div>
     </div>
 
@@ -107,15 +124,19 @@
       :product="deletingProduct"
       @delete="handleDelete"
     />
+
+    <!-- Shopping Cart -->
+    <ShoppingCart ref="cartRef" @cartUpdated="handleCartUpdated" />
   </div>
 </template>
 
 <script setup>
 import { ref, computed } from 'vue'
-import { getProducts, createProduct, updateProduct, deleteProduct } from '../services/api'
+import { getProducts, createProduct, updateProduct, deleteProduct, addToCart } from '../services/api'
 import ProductModal from './ProductModal.vue'
 import ProductDetailsModal from './ProductDetailsModal.vue'
 import DeleteProductModal from './DeleteProductModal.vue'
+import ShoppingCart from './ShoppingCart.vue'
 
 const products = ref([])
 const search = ref('')
@@ -124,6 +145,8 @@ const isAddingProduct = ref(false)
 const editingProduct = ref(null)
 const viewingProduct = ref(null)
 const deletingProduct = ref(null)
+const addingToCart = ref(null)
+const cartRef = ref(null)
 
 const filteredProducts = computed(() => {
   if (!search.value) return products.value
@@ -164,9 +187,14 @@ async function handleEdit(formData) {
   try {
     await updateProduct(formData.id, {
       price: formData.price,
-      stock: formData.stock
+      stock: formData.stock,
+      description: formData.description
     })
     await fetchProducts()
+    // Refresh cart after product update to show latest product information
+    if (cartRef.value) {
+      await cartRef.value.fetchCart()
+    }
     editingProduct.value = null
   } catch (error) {
     console.error('Error updating product:', error)
@@ -179,10 +207,39 @@ async function handleDelete() {
   try {
     await deleteProduct(deletingProduct.value.id)
     await fetchProducts()
+    // Refresh cart after product deletion to remove any orphaned items
+    if (cartRef.value) {
+      await cartRef.value.fetchCart()
+    }
     deletingProduct.value = null
   } catch (error) {
     console.error('Error deleting product:', error)
   }
+}
+
+async function handleAddToCart(product) {
+  if (product.stock === 0) return
+
+  addingToCart.value = product.id
+  try {
+    await addToCart(product.id, 1)
+    await fetchProducts() // Refresh products to update stock
+    if (cartRef.value) {
+      await cartRef.value.fetchCart() // Refresh cart
+    }
+  } catch (error) {
+    console.error('Error adding to cart:', error)
+    if (error.response?.status === 409) {
+      alert(error.response.data.detail)
+    }
+  } finally {
+    addingToCart.value = null
+  }
+}
+
+function handleCartUpdated() {
+  // Refresh products when cart is updated (e.g., items removed)
+  fetchProducts()
 }
 
 // Fetch products on component mount
