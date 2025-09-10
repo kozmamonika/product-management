@@ -1,3 +1,19 @@
+"""
+Product Management API with Shopping Cart
+
+This module provides a FastAPI-based REST API for managing products and shopping cart functionality.
+It includes endpoints for CRUD operations on products, cart management, and stock tracking.
+
+The API supports:
+- Product management (create, read, update, delete)
+- Shopping cart operations (add, remove, clear)
+- Stock tracking and validation
+- Concurrent cart operations with proper stock management
+
+Author: Product Management Team
+Version: 1.0.0
+"""
+
 from contextlib import asynccontextmanager
 from typing import List, Optional
 
@@ -12,33 +28,22 @@ from config import settings
 from database import Product, CartItem, create_tables, get_db, engine
 
 
-async def create_sample_data():
-    """Create sample products for testing"""
-    async with AsyncSession(bind=engine) as session:
-        # Check if products already exist
-        result = await session.execute(select(Product))
-        existing_products = result.scalars().all()
-
-        if not existing_products:
-            sample_products = [
-                Product(name="Laptop", price=999.99, description="High-performance laptop for work and gaming", stock=5),
-                Product(name="Wireless Mouse", price=29.99, description="Ergonomic wireless mouse with long battery life", stock=15),
-                Product(name="Mechanical Keyboard", price=129.99, description="RGB mechanical keyboard for gaming", stock=8),
-                Product(name="Monitor", price=299.99, description="24-inch 4K monitor with HDR support", stock=3),
-                Product(name="Webcam", price=79.99, description="HD webcam for video calls and streaming", stock=12),
-                Product(name="Headphones", price=159.99, description="Noise-cancelling wireless headphones", stock=0),  # Out of stock for testing
-            ]
-
-            for product in sample_products:
-                session.add(product)
-
-            await session.commit()
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    """
+    Manage the application lifecycle.
+
+    This context manager handles application startup and shutdown tasks:
+    - Creates database tables on startup
+    - Ensures proper cleanup on shutdown
+
+    Args:
+        app (FastAPI): The FastAPI application instance
+
+    Yields:
+        None: Control back to the application
+    """
     await create_tables()
-    await create_sample_data()
     yield
 
 
@@ -55,9 +60,28 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
+    """
+    Root endpoint that returns a welcome message.
+
+    Returns:
+        dict: Welcome message for the API
+    """
     return {"message": "Welcome to the product store"}
 
 class ProductDTO(BaseModel):
+    """
+    Product Data Transfer Object for API responses.
+
+    This model represents a product with all its attributes
+    as returned by the API endpoints.
+
+    Attributes:
+        id (int): Unique product identifier
+        name (str): Product name
+        price (float): Product price in USD
+        description (str | None): Optional product description
+        stock (int): Available stock quantity
+    """
     id: int
     name: str
     price: float
@@ -66,6 +90,18 @@ class ProductDTO(BaseModel):
 
 
 class ProductCreate(BaseModel):
+    """
+    Product creation request model.
+
+    This model defines the required and optional fields
+    for creating a new product.
+
+    Attributes:
+        name (str): Product name (required, must be unique)
+        price (float): Product price in USD (required, must be positive)
+        description (str | None): Optional product description
+        stock (int): Initial stock quantity (required, must be non-negative)
+    """
     name: str
     price: float
     description: str | None = None
@@ -73,11 +109,36 @@ class ProductCreate(BaseModel):
 
 
 class ProductUpdate(BaseModel):
+    """
+    Product update request model.
+
+    This model defines the fields that can be updated for an existing product.
+    All fields are optional to support partial updates.
+
+    Attributes:
+        price (Optional[float]): New product price
+        stock (Optional[int]): New stock quantity
+        description (Optional[str]): New product description
+    """
     price: Optional[float] = None
     stock: Optional[int] = None
+    description: Optional[str] = None
 
 
 class CartItemDTO(BaseModel):
+    """
+    Cart Item Data Transfer Object for API responses.
+
+    This model represents a cart item with its associated product
+    information and calculated line total.
+
+    Attributes:
+        id (int): Unique cart item identifier
+        product_id (int): Associated product identifier
+        quantity (int): Quantity of the product in cart
+        product (ProductDTO): Complete product information
+        line_total (float): Calculated total for this line item (price × quantity)
+    """
     id: int
     product_id: int
     quantity: int
@@ -86,11 +147,31 @@ class CartItemDTO(BaseModel):
 
 
 class CartItemAdd(BaseModel):
+    """
+    Cart item addition request model.
+
+    This model defines the data required to add an item to the cart.
+
+    Attributes:
+        product_id (int): ID of the product to add
+        quantity (int): Quantity to add (defaults to 1)
+    """
     product_id: int
     quantity: int = 1
 
 
 class CartSummary(BaseModel):
+    """
+    Shopping cart summary model.
+
+    This model provides a complete overview of the shopping cart
+    including all items, totals, and item count.
+
+    Attributes:
+        items (List[CartItemDTO]): List of all cart items
+        total (float): Total cart value
+        item_count (int): Number of different products in cart
+    """
     items: List[CartItemDTO]
     total: float
     item_count: int
@@ -98,6 +179,22 @@ class CartSummary(BaseModel):
 
 @app.post("/products/", response_model=ProductDTO)
 async def create_product(product: ProductCreate, db: AsyncSession = Depends(get_db)):
+    """
+    Create a new product.
+
+    This endpoint creates a new product in the database with the provided information.
+    Product names must be unique across the system.
+
+    Args:
+        product (ProductCreate): Product data for creation
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        ProductDTO: The created product with assigned ID
+
+    Raises:
+        HTTPException: 400 if product name already exists
+    """
     result = await db.execute(select(Product).filter(Product.name == product.name))
     db_product = result.first()
 
@@ -118,6 +215,18 @@ async def create_product(product: ProductCreate, db: AsyncSession = Depends(get_
 
 @app.get("/products/", response_model=List[ProductDTO])
 async def get_products(db: AsyncSession = Depends(get_db)):
+    """
+    Retrieve all products.
+
+    This endpoint returns a list of all products in the database
+    with their current stock levels and details.
+
+    Args:
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        List[ProductDTO]: List of all products
+    """
     result = await db.execute(select(Product))
     products = result.scalars().all()
     return products
@@ -127,6 +236,23 @@ async def get_products(db: AsyncSession = Depends(get_db)):
 async def update_product(
     product_id: int, product_update: ProductUpdate, db: AsyncSession = Depends(get_db)
 ):
+    """
+    Update an existing product.
+
+    This endpoint allows partial updates to product information.
+    Only the provided fields will be updated.
+
+    Args:
+        product_id (int): ID of the product to update
+        product_update (ProductUpdate): Fields to update
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        ProductDTO: The updated product
+
+    Raises:
+        HTTPException: 404 if product not found
+    """
     result = await db.execute(select(Product).filter(Product.id == product_id))
     db_product = result.scalar_one_or_none()
 
@@ -137,6 +263,8 @@ async def update_product(
         db_product.price = product_update.price
     if product_update.stock is not None:
         db_product.stock = product_update.stock
+    if product_update.description is not None:
+        db_product.description = product_update.description
 
     await db.commit()
     await db.refresh(db_product)
@@ -145,6 +273,19 @@ async def update_product(
 
 @app.delete("/products/{product_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_product(product_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Delete a product.
+
+    This endpoint removes a product from the database.
+    Associated cart items should be handled before deletion.
+
+    Args:
+        product_id (int): ID of the product to delete
+        db (AsyncSession): Database session dependency
+
+    Raises:
+        HTTPException: 404 if product not found
+    """
     result = await db.execute(select(Product).filter(Product.id == product_id))
     db_product = result.scalar_one_or_none()
 
@@ -158,6 +299,21 @@ async def delete_product(product_id: int, db: AsyncSession = Depends(get_db)):
 
 @app.get("/products/{product_id}", response_model=ProductDTO)
 async def get_product(product_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Retrieve a single product by ID.
+
+    This endpoint returns detailed information about a specific product.
+
+    Args:
+        product_id (int): ID of the product to retrieve
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        ProductDTO: The requested product
+
+    Raises:
+        HTTPException: 404 if product not found
+    """
     result = await db.execute(select(Product).filter(Product.id == product_id))
     product = result.scalar_one_or_none()
 
@@ -170,6 +326,30 @@ async def get_product(product_id: int, db: AsyncSession = Depends(get_db)):
 # Cart endpoints
 @app.post("/cart/items/", response_model=CartItemDTO)
 async def add_to_cart(cart_item: CartItemAdd, db: AsyncSession = Depends(get_db)):
+    """
+    Add an item to the shopping cart.
+
+    This endpoint adds a product to the cart or increases the quantity
+    if the product is already in the cart. It performs stock validation
+    to ensure sufficient inventory is available.
+
+    Stock Management:
+    - Checks total available stock (current stock + already in cart)
+    - Validates that the requested quantity doesn't exceed availability
+    - Updates product stock by reducing the added quantity
+    - Handles both new cart items and quantity updates
+
+    Args:
+        cart_item (CartItemAdd): Item to add with product ID and quantity
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        CartItemDTO: The cart item with product details and line total
+
+    Raises:
+        HTTPException: 404 if product not found
+        HTTPException: 409 if insufficient stock available
+    """
     # Check if product exists
     result = await db.execute(select(Product).filter(Product.id == cart_item.product_id))
     product = result.scalar_one_or_none()
@@ -234,6 +414,24 @@ async def add_to_cart(cart_item: CartItemAdd, db: AsyncSession = Depends(get_db)
 
 @app.get("/cart/", response_model=CartSummary)
 async def get_cart(db: AsyncSession = Depends(get_db)):
+    """
+    Retrieve the complete shopping cart.
+
+    This endpoint returns all items in the cart with their associated
+    product information, quantities, line totals, and overall cart summary.
+    It also handles cleanup of orphaned cart items (items referencing deleted products).
+
+    Calculations:
+    - Line total: product price × quantity for each item
+    - Cart total: sum of all line totals
+    - Item count: number of different products in cart
+
+    Args:
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        CartSummary: Complete cart information with items and totals
+    """
     result = await db.execute(
         select(CartItem).options(selectinload(CartItem.product))
     )
@@ -241,8 +439,15 @@ async def get_cart(db: AsyncSession = Depends(get_db)):
 
     items = []
     total = 0
+    orphaned_items = []
 
     for cart_item in cart_items:
+        # Check if the cart item has a valid associated product
+        if cart_item.product is None:
+            # This is an orphaned cart item - product was deleted but cart item wasn't
+            orphaned_items.append(cart_item)
+            continue
+
         line_total = cart_item.product.price * cart_item.quantity
         total += line_total
 
@@ -260,6 +465,12 @@ async def get_cart(db: AsyncSession = Depends(get_db)):
             line_total=line_total
         ))
 
+    # Clean up orphaned cart items if any were found
+    if orphaned_items:
+        for orphaned_item in orphaned_items:
+            await db.delete(orphaned_item)
+        await db.commit()
+
     return CartSummary(
         items=items,
         total=total,
@@ -269,6 +480,30 @@ async def get_cart(db: AsyncSession = Depends(get_db)):
 
 @app.patch("/cart/items/{cart_item_id}/remove-one", response_model=CartItemDTO)
 async def remove_one_from_cart(cart_item_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Remove one unit of an item from the cart.
+
+    This endpoint decrements the quantity of a cart item by 1.
+    If the quantity reaches 0, the entire cart item is removed.
+    Stock is restored to the product when items are removed.
+
+    Behavior:
+    - Decreases cart item quantity by 1
+    - Restores 1 unit to product stock
+    - Removes cart item completely if quantity becomes 0
+    - Returns updated cart item or 204 if completely removed
+
+    Args:
+        cart_item_id (int): ID of the cart item to modify
+        db (AsyncSession): Database session dependency
+
+    Returns:
+        CartItemDTO: Updated cart item with new quantity and totals
+
+    Raises:
+        HTTPException: 404 if cart item not found
+        HTTPException: 204 if item completely removed (quantity reached 0)
+    """
     result = await db.execute(
         select(CartItem).options(selectinload(CartItem.product)).filter(CartItem.id == cart_item_id)
     )
@@ -311,6 +546,19 @@ async def remove_one_from_cart(cart_item_id: int, db: AsyncSession = Depends(get
 
 @app.delete("/cart/items/{cart_item_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_from_cart(cart_item_id: int, db: AsyncSession = Depends(get_db)):
+    """
+    Remove an entire item from the cart.
+
+    This endpoint completely removes a cart item regardless of quantity.
+    All units of the product are restored to stock.
+
+    Args:
+        cart_item_id (int): ID of the cart item to remove
+        db (AsyncSession): Database session dependency
+
+    Raises:
+        HTTPException: 404 if cart item not found
+    """
     result = await db.execute(
         select(CartItem).options(selectinload(CartItem.product)).filter(CartItem.id == cart_item_id)
     )
@@ -329,6 +577,21 @@ async def remove_from_cart(cart_item_id: int, db: AsyncSession = Depends(get_db)
 
 @app.delete("/cart/", status_code=status.HTTP_204_NO_CONTENT)
 async def clear_cart(db: AsyncSession = Depends(get_db)):
+    """
+    Clear all items from the shopping cart.
+
+    This endpoint removes all cart items and restores all quantities
+    back to their respective product stock levels.
+
+    Process:
+    1. Retrieve all cart items with product information
+    2. Restore each item's quantity to its product stock
+    3. Delete all cart items
+    4. Commit changes atomically
+
+    Args:
+        db (AsyncSession): Database session dependency
+    """
     # Restore stock for all items in cart
     result = await db.execute(
         select(CartItem).options(selectinload(CartItem.product))
@@ -344,6 +607,12 @@ async def clear_cart(db: AsyncSession = Depends(get_db)):
 
 
 if __name__ == "__main__":
+    """
+    Application entry point for development server.
+
+    This block runs the FastAPI application using Uvicorn when the script
+    is executed directly. In production, use a proper ASGI server.
+    """
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)

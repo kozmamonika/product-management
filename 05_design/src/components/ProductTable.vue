@@ -187,9 +187,14 @@ async function handleEdit(formData) {
   try {
     await updateProduct(formData.id, {
       price: formData.price,
-      stock: formData.stock
+      stock: formData.stock,
+      description: formData.description
     })
     await fetchProducts()
+    // Refresh cart after product update to show latest product information
+    if (cartRef.value) {
+      await cartRef.value.fetchCart()
+    }
     editingProduct.value = null
   } catch (error) {
     console.error('Error updating product:', error)
@@ -202,6 +207,10 @@ async function handleDelete() {
   try {
     await deleteProduct(deletingProduct.value.id)
     await fetchProducts()
+    // Refresh cart after product deletion to remove any orphaned items
+    if (cartRef.value) {
+      await cartRef.value.fetchCart()
+    }
     deletingProduct.value = null
   } catch (error) {
     console.error('Error deleting product:', error)
